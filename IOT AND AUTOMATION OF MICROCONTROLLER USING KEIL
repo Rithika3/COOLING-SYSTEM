@@ -31,7 +31,7 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART2_Init(void);
 void ControlFan(int);
-void ControlFanSpeed(char* climate, char* food_type);
+void ControlFanSpeed(float);
 /**
   * @brief  The application entry point.
   * @retval int
@@ -47,9 +47,7 @@ int main(void)
   MX_TIM2_Init();
   MX_USART2_Init();
 	
-	char* current_climate = "summer";  // Options: "summer", "rainy", "winter"
-  char* current_food_type = "Meat";  // Options: "Meat", "Fruits and Vegetables"
-  ControlFanSpeed(current_climate, current_food_type);
+
   while (1)
   {
 		ControlFan(1);  // Turn the fan ON
@@ -70,38 +68,48 @@ void ControlFan(int state) {
     }
 }
 extern USART_HandleTypeDef husart2; // Declare your USART handle
-void ControlFanSpeed(char* climate, char* food_type) {
-    uint16_t fan_rpm = 0;  // Variable to hold RPM value
-    char rpm_message[50];   // Buffer to hold the message for transmission
+typedef struct {
+    float temperature;  // Temperature input
+    double fan_rpm;   // Corresponding RPM value
+} TempToRPM;
 
-    // Summer conditions
-    if (strcmp(climate, "summer") == 0) {
-        if (strcmp(food_type, "Meat") == 0) {
-            fan_rpm = 4521;  // Meat in summer
-        } else if (strcmp(food_type, "Fruits and Vegetables") == 0) {
-            fan_rpm = 20;  // Fruits and vegetables in summer
+// Create a lookup table for temperature and corresponding RPM
+TempToRPM lookup_table[] = {
+    {0.16, 4521},            // 0.16°C -> 4521 RPM
+    {9.99026, 202},           // 9.99026°C (or 282.99026 K) -> 202 RPM
+    {0.39, 4438},            // 0.39°C -> 4438 RPM
+    {9.78918, 66.47},         // 9.78918°C -> 66.47 RPM
+    {0.06654, 656},          // 0.06654°C -> 656 RPM
+    {9.33538, 10},            // 9.33538°C -> 10 RPM
+    // Add more entries as needed
+};
+
+void ControlFanSpeed(float temperature) {
+    uint16_t fan_rpm = 0;
+    char rpm_message[50];   // Buffer to hold the message for transmission
+    int found = 0;          // Flag to check if we found a matching temperature
+
+    // Iterate over the lookup table to find a matching temperature
+    for (int i = 0; i < sizeof(lookup_table) / sizeof(lookup_table[0]); i++) {
+        if (temperature == lookup_table[i].temperature) {
+            fan_rpm = lookup_table[i].fan_rpm;
+            found = 1;  // Set flag that we found the temperature
+            break;
         }
     }
-    // Rainy conditions
-    else if (strcmp(climate, "rainy") == 0) {
-        if (strcmp(food_type, "Meat") == 0) {
-            fan_rpm = 4438;  // Meat in rainy season
-        } else if (strcmp(food_type, "Fruits and Vegetables") == 0) {
-            fan_rpm = 7;  // Fruits and vegetables in rainy season
-        }
+
+    if (!found) {
+        fan_rpm = 0;  // If no match is found, set RPM to 0 (or some default)
     }
-    // Winter conditions
-    else if (strcmp(climate, "winter") == 0) {
-        if (strcmp(food_type, "Meat") == 0) {
-            fan_rpm = 656;  // Meat in winter
-        } else if (strcmp(food_type, "Fruits and Vegetables") == 0) {
-            fan_rpm = 1;  // Fruits and vegetables in winter
-        }
-    }
+
+    // Set the RPM of the fan using timer compare
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, fan_rpm);
-    sprintf(rpm_message, "Fan RPM: %d\r\n", fan_rpm);
+    
+    // Transmit the fan RPM message over USART
+    sprintf(rpm_message, "%d", fan_rpm);
     HAL_USART_Transmit(&husart2, (uint8_t *)rpm_message, strlen(rpm_message), HAL_MAX_DELAY);
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
